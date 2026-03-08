@@ -108,23 +108,7 @@ E_i = Σ_k  filter_i[k] × |X[k]|²
 
 (a weighted sum of the power spectral density over the filter's support).
 
-#### 1d. Note-band concentration check
-
-Before testing per-note dominance, the frame is rejected if the total
-note-band energy is too small a fraction of the total one-sided spectral
-power:
-
-```
-E_total / P_total  ≥  NOTE_BAND_MIN_FRACTION  (default 0.30)
-```
-
-where `P_total = Σ_k |X[k]|²` sums over all FFT bins in the one-sided
-spectrum.  A struck xylophone bar concentrates 70–95% of its energy in
-the fundamental; broadband speech spreads energy across 0–8 kHz and
-typically achieves only 5–15% in the 1–2 kHz note band.  This check is
-the primary discriminator against background speech.
-
-#### 1e. Per-note dominance check
+#### 1d. Per-note dominance check
 
 Sum the energies across all eight filters:
 
@@ -155,34 +139,16 @@ gradual exponential decay.  Without gating, the analyser emits continuous
 predictions throughout the sustain tail, even when the note has mostly decayed
 into noise.
 
-**Onset detection** uses spectral flux on the total note-band energy, combined
-with an absolute energy floor:
+**Onset detection** uses spectral flux on the total note-band energy:
 
 ```
-onset candidate  ⟺  E_total[f]  ≥  ONSET_MIN_ENERGY  (default 5.0)
-                 AND  E_total[f] / E_total[f−1]  ≥  ONSET_FLUX_RATIO  (default 3.0)
+onset detected  ⟺  E_total[f] / E_total[f−1]  ≥  ONSET_FLUX_RATIO  (default 3.0)
 ```
 
-The energy floor `ONSET_MIN_ENERGY` rejects speech consonants that produce a
-high *ratio* (near-zero energy spiking to slightly-less-near-zero) while the
-absolute note-band energy stays negligible.  A struck bar — even a soft one —
-immediately deposits energy of 50+ in the filterbank.  A threefold energy
-increase in a single 10 ms stride reliably catches the sharp attack.
+A threefold energy increase in a single 10 ms stride reliably catches the sharp
+attack of a struck bar.
 
-When a flux spike is detected, the onset is **confirmed** before the hold
-counter is latched.  Confirmation requires the same winner note to appear in
-the next `ONSET_CONFIRM_FRAMES` frames (default 2, i.e. 30 ms):
-
-```
-onset confirmed  ⟺  raw[f] == raw[f+1] == … == raw[f+ONSET_CONFIRM_FRAMES]
-                     (all != NO_PREDICTION)
-```
-
-Speech consonants (plosives, fricatives) produce sharp single-frame energy
-spikes but the predicted winner changes every frame.  A struck bar has a
-stable, unchanging pitch.  Unconfirmed flux spikes are silently discarded.
-
-After a confirmed onset, the raw prediction is forwarded to the output for
+After an onset, the raw prediction is forwarded to the output for
 `ONSET_HOLD_FRAMES` frames (default 120 ≈ 1200 ms), then suppressed until the
 next onset.  If a new onset is detected during the hold period the counter
 resets, so rapid successive notes are handled correctly.
@@ -222,9 +188,6 @@ All constants are defined at the top of `analysis/src/lib.rs`.
 |---|---|---|
 | `ENERGY_THRESHOLD` | `0.01` | Raises the silence floor; more frames become NO_PREDICTION |
 | `NOTE_DOMINANCE_THRESHOLD` | `0.45` | Requires a clearer spectral peak; rejects more ambiguous frames |
-| `NOTE_BAND_MIN_FRACTION` | `0.30` | Raises the note-band concentration floor; rejects more broadband noise/speech |
 | `ONSET_FLUX_RATIO` | `3.0` | Requires a sharper energy rise to declare an onset; misses softer strikes |
-| `ONSET_MIN_ENERGY` | `5.0` | Raises the minimum note-band energy for onset; rejects speech consonants |
-| `ONSET_CONFIRM_FRAMES` | `2` | More frames required to confirm an onset; rejects more speech plosives |
 | `ONSET_HOLD_FRAMES` | `120` | Extends prediction blocks; captures more of the note's decay |
 | `SMOOTH_HALF_WIN` | `2` | Wider smoothing window; fewer single-frame glitches but blurs boundaries |

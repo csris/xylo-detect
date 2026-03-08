@@ -18,27 +18,11 @@ const ENERGY_THRESHOLD: f32 = 0.01;
 // Raised to 0.45 to reject broadband speech (which spreads energy across all filters).
 const NOTE_DOMINANCE_THRESHOLD: f32 = 0.45;
 
-// Note-band concentration: the total note-band energy must be at least this fraction
-// of the total one-sided FFT power. A struck xylophone bar concentrates nearly all
-// energy in its fundamental (0.70–0.95); broadband speech sits at 0.05–0.15.
-const NOTE_BAND_MIN_FRACTION: f32 = 0.30;
-
 // Onset detection: total note-band energy must rise by at least this ratio in one
 // 10 ms stride to count as a new onset.
 const ONSET_FLUX_RATIO: f32 = 3.0;
 
-// Minimum absolute note-band energy at onset time. Speech consonants produce high
-// flux ratios (a tiny energy spiking to a slightly-less-tiny energy) but the
-// absolute note-band energy stays very small. Real struck bars immediately reach
-// energies of 50+ even for soft hits.
-const ONSET_MIN_ENERGY: f32 = 5.0;
-
-// Onset confirmation: the same winner must appear in this many consecutive frames
-// after the flux spike before the onset hold is latched. Prevents single-frame
-// speech consonants (plosives, fricatives) from triggering the hold counter.
-const ONSET_CONFIRM_FRAMES: usize = 2;
-
-// Hold the predicted note for this many frames after a confirmed onset (~1200 ms).
+// Hold the predicted note for this many frames after an onset (~1200 ms).
 const ONSET_HOLD_FRAMES: usize = 120;
 
 // Temporal smoothing: half-window for the mode filter (full window = 2×N+1 frames = 50 ms).
@@ -117,11 +101,6 @@ pub fn analyze_audio(samples: &[f32], sample_rate: f32) -> Vec<u8> {
         let total: f32 = energies.iter().sum();
         note_energy.push(total);
 
-        // Note-band concentration: reject if note-band energy is a small fraction of
-        // total spectral power (characteristic of broadband speech/noise).
-        let total_fft_power: f32 = mag.iter().map(|&m| m * m).sum();
-        let note_band_fraction = if total_fft_power > 1e-10 { total / total_fft_power } else { 0.0 };
-
         // Per-note dominance check (scale-invariant)
         let (best_idx, &best_e) = energies
             .iter()
@@ -129,10 +108,7 @@ pub fn analyze_audio(samples: &[f32], sample_rate: f32) -> Vec<u8> {
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
             .unwrap_or((0, &0.0));
 
-        if total < 1e-10
-            || note_band_fraction < NOTE_BAND_MIN_FRACTION
-            || best_e / total < NOTE_DOMINANCE_THRESHOLD
-        {
+        if total < 1e-10 || best_e / total < NOTE_DOMINANCE_THRESHOLD {
             raw.push(NO_PREDICTION);
         } else {
             raw.push(best_idx as u8);
@@ -147,18 +123,8 @@ pub fn analyze_audio(samples: &[f32], sample_rate: f32) -> Vec<u8> {
 
     for f in 0..num_frames {
         let curr_e = note_energy[f];
-        if curr_e >= ONSET_MIN_ENERGY && curr_e > prev_e.max(1e-10) * ONSET_FLUX_RATIO {
-            // Confirm onset: require the same winner in the next ONSET_CONFIRM_FRAMES
-            // frames. Speech consonants produce single-frame flux spikes with an
-            // erratically changing winner; a struck note is stable.
-            let candidate = raw[f];
-            let confirmed = candidate != NO_PREDICTION
-                && (1..=ONSET_CONFIRM_FRAMES).all(|d| {
-                    f + d < num_frames && raw[f + d] == candidate
-                });
-            if confirmed {
-                hold = ONSET_HOLD_FRAMES;
-            }
+        if curr_e > prev_e.max(1e-10) * ONSET_FLUX_RATIO {
+            hold = ONSET_HOLD_FRAMES; // new onset: reset hold counter
         }
         if hold > 0 {
             gated[f] = raw[f];
