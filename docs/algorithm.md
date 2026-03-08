@@ -108,7 +108,23 @@ E_i = Σ_k  filter_i[k] × |X[k]|²
 
 (a weighted sum of the power spectral density over the filter's support).
 
-#### 1d. Per-note dominance check
+#### 1d. Note-band concentration check
+
+Before testing per-note dominance, the frame is rejected if the total
+note-band energy is too small a fraction of the total one-sided spectral
+power:
+
+```
+E_total / P_total  ≥  NOTE_BAND_MIN_FRACTION  (default 0.30)
+```
+
+where `P_total = Σ_k |X[k]|²` sums over all FFT bins in the one-sided
+spectrum.  A struck xylophone bar concentrates 70–95% of its energy in
+the fundamental; broadband speech spreads energy across 0–8 kHz and
+typically achieves only 5–15% in the 1–2 kHz note band.  This check is
+the primary discriminator against background speech.
+
+#### 1e. Per-note dominance check
 
 Sum the energies across all eight filters:
 
@@ -188,6 +204,7 @@ All constants are defined at the top of `analysis/src/lib.rs`.
 |---|---|---|
 | `ENERGY_THRESHOLD` | `0.01` | Raises the silence floor; more frames become NO_PREDICTION |
 | `NOTE_DOMINANCE_THRESHOLD` | `0.45` | Requires a clearer spectral peak; rejects more ambiguous frames |
+| `NOTE_BAND_MIN_FRACTION` | `0.30` | Raises the note-band concentration floor; rejects more broadband noise/speech |
 | `ONSET_FLUX_RATIO` | `3.0` | Requires a sharper energy rise to declare an onset; misses softer strikes |
 | `ONSET_HOLD_FRAMES` | `120` | Extends prediction blocks; captures more of the note's decay |
 | `SMOOTH_HALF_WIN` | `2` | Wider smoothing window; fewer single-frame glitches but blurs boundaries |

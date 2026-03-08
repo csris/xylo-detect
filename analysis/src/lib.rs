@@ -18,6 +18,11 @@ const ENERGY_THRESHOLD: f32 = 0.01;
 // Raised to 0.45 to reject broadband speech (which spreads energy across all filters).
 const NOTE_DOMINANCE_THRESHOLD: f32 = 0.45;
 
+// Note-band concentration: the total note-band energy must be at least this fraction
+// of the total one-sided FFT power. A struck xylophone bar concentrates nearly all
+// energy in its fundamental (0.70–0.95); broadband speech sits at 0.05–0.15.
+const NOTE_BAND_MIN_FRACTION: f32 = 0.30;
+
 // Onset detection: total note-band energy must rise by at least this ratio in one
 // 10 ms stride to count as a new onset.
 const ONSET_FLUX_RATIO: f32 = 3.0;
@@ -101,6 +106,11 @@ pub fn analyze_audio(samples: &[f32], sample_rate: f32) -> Vec<u8> {
         let total: f32 = energies.iter().sum();
         note_energy.push(total);
 
+        // Note-band concentration: reject if note-band energy is a small fraction of
+        // total spectral power (characteristic of broadband speech/noise).
+        let total_fft_power: f32 = mag.iter().map(|&m| m * m).sum();
+        let note_band_fraction = if total_fft_power > 1e-10 { total / total_fft_power } else { 0.0 };
+
         // Per-note dominance check (scale-invariant)
         let (best_idx, &best_e) = energies
             .iter()
@@ -108,7 +118,10 @@ pub fn analyze_audio(samples: &[f32], sample_rate: f32) -> Vec<u8> {
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
             .unwrap_or((0, &0.0));
 
-        if total < 1e-10 || best_e / total < NOTE_DOMINANCE_THRESHOLD {
+        if total < 1e-10
+            || note_band_fraction < NOTE_BAND_MIN_FRACTION
+            || best_e / total < NOTE_DOMINANCE_THRESHOLD
+        {
             raw.push(NO_PREDICTION);
         } else {
             raw.push(best_idx as u8);

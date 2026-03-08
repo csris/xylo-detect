@@ -23,6 +23,7 @@ NOTE_NAMES   = ['C6', 'D6', 'E6', 'F6', 'G6', 'A6', 'B6', 'C7']
 # Current threshold values
 ENERGY_THRESHOLD       = 0.01    # global RMS silence gate
 NOTE_DOMINANCE_THRESH  = 0.45    # winning filter fraction of total note-band energy
+NOTE_BAND_MIN_FRACTION = 0.30    # note-band energy as fraction of total FFT power
 ONSET_FLUX_RATIO       = 3.0     # energy ratio to declare onset
 ONSET_HOLD_FRAMES      = 120     # frames to hold after onset
 SMOOTH_HALF_WIN        = 2       # mode filter half-window
@@ -73,10 +74,11 @@ def analyze(data: np.ndarray, sr: int) -> None:
     print(f"File: {len(data)} samples  {len(data)/sr:.3f}s  {sr} Hz")
     print(f"Frames: {num_frames}  ({FRAME_MS}ms / {STRIDE_MS}ms stride)\n")
     print(f"Current thresholds: RMS≥{ENERGY_THRESHOLD}  dominance≥{NOTE_DOMINANCE_THRESH}  "
-          f"flux≥{ONSET_FLUX_RATIO}  hold={ONSET_HOLD_FRAMES}  smooth±{SMOOTH_HALF_WIN}\n")
+          f"conc≥{NOTE_BAND_MIN_FRACTION}  flux≥{ONSET_FLUX_RATIO}  "
+          f"hold={ONSET_HOLD_FRAMES}  smooth±{SMOOTH_HALF_WIN}\n")
 
-    header = f"{'Fr':>4}  {'t(s)':>5}  {'RMS':>8}  {'Winner':>6}  "  \
-             f"{'Dom':>6}  {'TotalE':>10}  {'Flux':>6}  Flags"
+    header = f"{'Fr':>4}  {'t(s)':>5}  {'RMS':>8}  {'Winner':>6}  " \
+             f"{'Dom':>6}  {'Conc':>6}  {'TotalE':>10}  {'Flux':>6}  Flags"
     print(header)
     print("─" * len(header))
 
@@ -94,24 +96,30 @@ def analyze(data: np.ndarray, sr: int) -> None:
 
         if rms < ENERGY_THRESHOLD:
             raw_preds.append(None)
-            print(f"{f:>4}  {t:>5.3f}  {rms:>8.5f}  {'—':>6}  {'—':>6}  {'—':>10}  {'—':>6}  [silent]")
+            print(f"{f:>4}  {t:>5.3f}  {rms:>8.5f}  {'—':>6}  {'—':>6}  {'—':>6}  {'—':>10}  {'—':>6}  [silent]")
             prev_total = 1e-10
             if hold > 0: hold -= 1
             continue
 
-        windowed = frame * hann
-        mag      = np.abs(np.fft.rfft(windowed))
-        energies = bank @ (mag ** 2)
-        total    = float(energies.sum())
-        flux     = total / max(prev_total, 1e-10)
-        winner   = int(np.argmax(energies))
-        dom      = energies[winner] / total if total > 1e-10 else 0.0
+        windowed        = frame * hann
+        mag             = np.abs(np.fft.rfft(windowed))
+        mag_sq          = mag ** 2
+        energies        = bank @ mag_sq
+        total           = float(energies.sum())
+        total_fft_power = float(mag_sq.sum())
+        conc            = total / max(total_fft_power, 1e-10)
+        flux            = total / max(prev_total, 1e-10)
+        winner          = int(np.argmax(energies))
+        dom             = energies[winner] / total if total > 1e-10 else 0.0
 
         if flux >= ONSET_FLUX_RATIO:
             hold = ONSET_HOLD_FRAMES
             flags.append("ONSET")
 
-        if dom < NOTE_DOMINANCE_THRESH:
+        if conc < NOTE_BAND_MIN_FRACTION:
+            flags.append("low-conc")
+            raw_preds.append(None)
+        elif dom < NOTE_DOMINANCE_THRESH:
             flags.append("low-dom")
             raw_preds.append(None)
         else:
@@ -122,7 +130,7 @@ def analyze(data: np.ndarray, sr: int) -> None:
             hold -= 1
 
         print(f"{f:>4}  {t:>5.3f}  {rms:>8.5f}  {NOTE_NAMES[winner]:>6}  "
-              f"{dom:>6.3f}  {total:>10.1f}  {flux:>6.2f}  {' '.join(flags)}")
+              f"{dom:>6.3f}  {conc:>6.3f}  {total:>10.1f}  {flux:>6.2f}  {' '.join(flags)}")
 
         prev_total = total
 
