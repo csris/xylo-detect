@@ -164,7 +164,20 @@ onset detected  ⟺  E_total[f] / E_total[f−1]  ≥  ONSET_FLUX_RATIO  (defaul
 A threefold energy increase in a single 10 ms stride reliably catches the sharp
 attack of a struck bar.
 
-After an onset, the raw prediction is forwarded to the output for
+When a flux spike is detected, the onset is **confirmed** before the hold
+counter is latched.  Confirmation requires the same winner note to appear in
+the next `ONSET_CONFIRM_FRAMES` frames (default 2, i.e. 30 ms):
+
+```
+onset confirmed  ⟺  raw[f] == raw[f+1] == … == raw[f+ONSET_CONFIRM_FRAMES]
+                     (all != NO_PREDICTION)
+```
+
+Speech consonants (plosives, fricatives) produce sharp single-frame energy
+spikes but the predicted winner changes every frame.  A struck bar has a
+stable, unchanging pitch.  Unconfirmed flux spikes are silently discarded.
+
+After a confirmed onset, the raw prediction is forwarded to the output for
 `ONSET_HOLD_FRAMES` frames (default 120 ≈ 1200 ms), then suppressed until the
 next onset.  If a new onset is detected during the hold period the counter
 resets, so rapid successive notes are handled correctly.
@@ -206,5 +219,6 @@ All constants are defined at the top of `analysis/src/lib.rs`.
 | `NOTE_DOMINANCE_THRESHOLD` | `0.45` | Requires a clearer spectral peak; rejects more ambiguous frames |
 | `NOTE_BAND_MIN_FRACTION` | `0.30` | Raises the note-band concentration floor; rejects more broadband noise/speech |
 | `ONSET_FLUX_RATIO` | `3.0` | Requires a sharper energy rise to declare an onset; misses softer strikes |
+| `ONSET_CONFIRM_FRAMES` | `2` | More frames required to confirm an onset; rejects more speech plosives |
 | `ONSET_HOLD_FRAMES` | `120` | Extends prediction blocks; captures more of the note's decay |
 | `SMOOTH_HALF_WIN` | `2` | Wider smoothing window; fewer single-frame glitches but blurs boundaries |

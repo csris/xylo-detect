@@ -27,7 +27,12 @@ const NOTE_BAND_MIN_FRACTION: f32 = 0.30;
 // 10 ms stride to count as a new onset.
 const ONSET_FLUX_RATIO: f32 = 3.0;
 
-// Hold the predicted note for this many frames after an onset (~1200 ms).
+// Onset confirmation: the same winner must appear in this many consecutive frames
+// after the flux spike before the onset hold is latched. Prevents single-frame
+// speech consonants (plosives, fricatives) from triggering the hold counter.
+const ONSET_CONFIRM_FRAMES: usize = 2;
+
+// Hold the predicted note for this many frames after a confirmed onset (~1200 ms).
 const ONSET_HOLD_FRAMES: usize = 120;
 
 // Temporal smoothing: half-window for the mode filter (full window = 2×N+1 frames = 50 ms).
@@ -137,7 +142,17 @@ pub fn analyze_audio(samples: &[f32], sample_rate: f32) -> Vec<u8> {
     for f in 0..num_frames {
         let curr_e = note_energy[f];
         if curr_e > prev_e.max(1e-10) * ONSET_FLUX_RATIO {
-            hold = ONSET_HOLD_FRAMES; // new onset: reset hold counter
+            // Confirm onset: require the same winner in the next ONSET_CONFIRM_FRAMES
+            // frames. Speech consonants produce single-frame flux spikes with an
+            // erratically changing winner; a struck note is stable.
+            let candidate = raw[f];
+            let confirmed = candidate != NO_PREDICTION
+                && (1..=ONSET_CONFIRM_FRAMES).all(|d| {
+                    f + d < num_frames && raw[f + d] == candidate
+                });
+            if confirmed {
+                hold = ONSET_HOLD_FRAMES;
+            }
         }
         if hold > 0 {
             gated[f] = raw[f];
