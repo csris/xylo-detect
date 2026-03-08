@@ -15,7 +15,8 @@ const ENERGY_THRESHOLD: f32 = 0.01;
 
 // Per-note dominance: the winning filter must hold at least this fraction of the
 // total note-band energy. Scale-invariant; uniform energy → each filter = 1/8 = 0.125.
-const NOTE_DOMINANCE_THRESHOLD: f32 = 0.25;
+// Raised to 0.45 to reject broadband speech (which spreads energy across all filters).
+const NOTE_DOMINANCE_THRESHOLD: f32 = 0.45;
 
 // Onset detection: total note-band energy must rise by at least this ratio in one
 // 10 ms stride to count as a new onset.

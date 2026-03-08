@@ -120,14 +120,15 @@ The winning filter is `argmax_i(E_i)`.  A prediction is made only if the
 winner's share of total note-band energy exceeds the dominance threshold:
 
 ```
-E_winner / E_total  ≥  NOTE_DOMINANCE_THRESHOLD  (default 0.25)
+E_winner / E_total  ≥  NOTE_DOMINANCE_THRESHOLD  (default 0.45)
 ```
 
 This check is **scale-invariant** (independent of recording level).  When
 energy is spread roughly equally across filters — e.g. broadband noise,
-reverberation, or a chord — no single filter reaches 25% and the frame is
-marked `NO_PREDICTION`.  The 1/8 = 12.5% uniform baseline means only
-genuinely dominant pitches pass.
+reverberation, speech, or a chord — no single filter reaches 45% and the
+frame is marked `NO_PREDICTION`.  The 1/8 = 12.5% uniform baseline means
+only genuinely dominant pitches pass; the 0.45 threshold was chosen to
+reject background speech, which typically achieves dominance of 0.25–0.44.
 
 ---
 
@@ -186,7 +187,7 @@ All constants are defined at the top of `analysis/src/lib.rs`.
 | Constant | Default | Effect of increasing |
 |---|---|---|
 | `ENERGY_THRESHOLD` | `0.01` | Raises the silence floor; more frames become NO_PREDICTION |
-| `NOTE_DOMINANCE_THRESHOLD` | `0.25` | Requires a clearer spectral peak; rejects more ambiguous frames |
+| `NOTE_DOMINANCE_THRESHOLD` | `0.45` | Requires a clearer spectral peak; rejects more ambiguous frames |
 | `ONSET_FLUX_RATIO` | `3.0` | Requires a sharper energy rise to declare an onset; misses softer strikes |
 | `ONSET_HOLD_FRAMES` | `120` | Extends prediction blocks; captures more of the note's decay |
 | `SMOOTH_HALF_WIN` | `2` | Wider smoothing window; fewer single-frame glitches but blurs boundaries |

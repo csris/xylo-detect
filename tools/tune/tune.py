@@ -22,7 +22,7 @@ NOTE_NAMES   = ['C6', 'D6', 'E6', 'F6', 'G6', 'A6', 'B6', 'C7']
 
 # Current threshold values
 ENERGY_THRESHOLD       = 0.01    # global RMS silence gate
-NOTE_DOMINANCE_THRESH  = 0.25    # winning filter fraction of total note-band energy
+NOTE_DOMINANCE_THRESH  = 0.45    # winning filter fraction of total note-band energy
 ONSET_FLUX_RATIO       = 3.0     # energy ratio to declare onset
 ONSET_HOLD_FRAMES      = 120     # frames to hold after onset
 SMOOTH_HALF_WIN        = 2       # mode filter half-window
