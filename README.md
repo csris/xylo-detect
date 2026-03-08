@@ -84,5 +84,5 @@ All analysis parameters live as named constants at the top of
 | `ENERGY_THRESHOLD` | `0.01` | Global RMS silence gate (~−40 dB) |
 | `NOTE_DOMINANCE_THRESHOLD` | `0.25` | Min fraction of note-band energy the winning filter must hold |
 | `ONSET_FLUX_RATIO` | `3.0` | Energy ratio required to declare an onset |
-| `ONSET_HOLD_FRAMES` | `30` | Frames to hold a prediction after an onset (~300 ms) |
+| `ONSET_HOLD_FRAMES` | `40` | Frames to hold a prediction after an onset (~400 ms) |
 | `SMOOTH_HALF_WIN` | `2` | Half-window for the temporal mode filter (±2 frames = 50 ms) |

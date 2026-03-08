@@ -22,7 +22,7 @@ const NOTE_DOMINANCE_THRESHOLD: f32 = 0.25;
 const ONSET_FLUX_RATIO: f32 = 3.0;
 
 // Hold the predicted note for this many frames after an onset (~300 ms).
-const ONSET_HOLD_FRAMES: usize = 30;
+const ONSET_HOLD_FRAMES: usize = 40;
 
 // Temporal smoothing: half-window for the mode filter (full window = 2×N+1 frames = 50 ms).
 const SMOOTH_HALF_WIN: usize = 2;
