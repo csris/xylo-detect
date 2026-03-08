@@ -155,14 +155,19 @@ gradual exponential decay.  Without gating, the analyser emits continuous
 predictions throughout the sustain tail, even when the note has mostly decayed
 into noise.
 
-**Onset detection** uses spectral flux on the total note-band energy:
+**Onset detection** uses spectral flux on the total note-band energy, combined
+with an absolute energy floor:
 
 ```
-onset detected  ⟺  E_total[f] / E_total[f−1]  ≥  ONSET_FLUX_RATIO  (default 3.0)
+onset candidate  ⟺  E_total[f]  ≥  ONSET_MIN_ENERGY  (default 5.0)
+                 AND  E_total[f] / E_total[f−1]  ≥  ONSET_FLUX_RATIO  (default 3.0)
 ```
 
-A threefold energy increase in a single 10 ms stride reliably catches the sharp
-attack of a struck bar.
+The energy floor `ONSET_MIN_ENERGY` rejects speech consonants that produce a
+high *ratio* (near-zero energy spiking to slightly-less-near-zero) while the
+absolute note-band energy stays negligible.  A struck bar — even a soft one —
+immediately deposits energy of 50+ in the filterbank.  A threefold energy
+increase in a single 10 ms stride reliably catches the sharp attack.
 
 When a flux spike is detected, the onset is **confirmed** before the hold
 counter is latched.  Confirmation requires the same winner note to appear in
@@ -219,6 +224,7 @@ All constants are defined at the top of `analysis/src/lib.rs`.
 | `NOTE_DOMINANCE_THRESHOLD` | `0.45` | Requires a clearer spectral peak; rejects more ambiguous frames |
 | `NOTE_BAND_MIN_FRACTION` | `0.30` | Raises the note-band concentration floor; rejects more broadband noise/speech |
 | `ONSET_FLUX_RATIO` | `3.0` | Requires a sharper energy rise to declare an onset; misses softer strikes |
+| `ONSET_MIN_ENERGY` | `5.0` | Raises the minimum note-band energy for onset; rejects speech consonants |
 | `ONSET_CONFIRM_FRAMES` | `2` | More frames required to confirm an onset; rejects more speech plosives |
 | `ONSET_HOLD_FRAMES` | `120` | Extends prediction blocks; captures more of the note's decay |
 | `SMOOTH_HALF_WIN` | `2` | Wider smoothing window; fewer single-frame glitches but blurs boundaries |

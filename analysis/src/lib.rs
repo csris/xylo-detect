@@ -27,6 +27,12 @@ const NOTE_BAND_MIN_FRACTION: f32 = 0.30;
 // 10 ms stride to count as a new onset.
 const ONSET_FLUX_RATIO: f32 = 3.0;
 
+// Minimum absolute note-band energy at onset time. Speech consonants produce high
+// flux ratios (a tiny energy spiking to a slightly-less-tiny energy) but the
+// absolute note-band energy stays very small. Real struck bars immediately reach
+// energies of 50+ even for soft hits.
+const ONSET_MIN_ENERGY: f32 = 5.0;
+
 // Onset confirmation: the same winner must appear in this many consecutive frames
 // after the flux spike before the onset hold is latched. Prevents single-frame
 // speech consonants (plosives, fricatives) from triggering the hold counter.
@@ -141,7 +147,7 @@ pub fn analyze_audio(samples: &[f32], sample_rate: f32) -> Vec<u8> {
 
     for f in 0..num_frames {
         let curr_e = note_energy[f];
-        if curr_e > prev_e.max(1e-10) * ONSET_FLUX_RATIO {
+        if curr_e >= ONSET_MIN_ENERGY && curr_e > prev_e.max(1e-10) * ONSET_FLUX_RATIO {
             // Confirm onset: require the same winner in the next ONSET_CONFIRM_FRAMES
             // frames. Speech consonants produce single-frame flux spikes with an
             // erratically changing winner; a struck note is stable.

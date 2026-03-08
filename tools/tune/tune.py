@@ -25,6 +25,7 @@ ENERGY_THRESHOLD       = 0.01    # global RMS silence gate
 NOTE_DOMINANCE_THRESH  = 0.45    # winning filter fraction of total note-band energy
 NOTE_BAND_MIN_FRACTION = 0.30    # note-band energy as fraction of total FFT power
 ONSET_FLUX_RATIO       = 3.0     # energy ratio to declare onset
+ONSET_MIN_ENERGY       = 5.0     # minimum absolute note-band energy at onset
 ONSET_HOLD_FRAMES      = 120     # frames to hold after onset
 SMOOTH_HALF_WIN        = 2       # mode filter half-window
 
@@ -75,7 +76,8 @@ def analyze(data: np.ndarray, sr: int) -> None:
     print(f"Frames: {num_frames}  ({FRAME_MS}ms / {STRIDE_MS}ms stride)\n")
     print(f"Current thresholds: RMS≥{ENERGY_THRESHOLD}  dominance≥{NOTE_DOMINANCE_THRESH}  "
           f"conc≥{NOTE_BAND_MIN_FRACTION}  flux≥{ONSET_FLUX_RATIO}  "
-          f"hold={ONSET_HOLD_FRAMES}  smooth±{SMOOTH_HALF_WIN}\n")
+          f"onset-energy≥{ONSET_MIN_ENERGY}  hold={ONSET_HOLD_FRAMES}  "
+          f"smooth±{SMOOTH_HALF_WIN}\n")
 
     header = f"{'Fr':>4}  {'t(s)':>5}  {'RMS':>8}  {'Winner':>6}  " \
              f"{'Dom':>6}  {'Conc':>6}  {'TotalE':>10}  {'Flux':>6}  Flags"
@@ -112,7 +114,7 @@ def analyze(data: np.ndarray, sr: int) -> None:
         winner          = int(np.argmax(energies))
         dom             = energies[winner] / total if total > 1e-10 else 0.0
 
-        if flux >= ONSET_FLUX_RATIO:
+        if total >= ONSET_MIN_ENERGY and flux >= ONSET_FLUX_RATIO:
             hold = ONSET_HOLD_FRAMES
             flags.append("ONSET")
 
