@@ -1,0 +1,11 @@
+[package]
+name = "tune"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "tune"
+path = "src/main.rs"
+
+[dependencies]
+analysis = { path = "../../analysis" }

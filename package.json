@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "build:wasm": "cd analysis && wasm-pack build --target web --out-dir ../src/wasm"
+    "build:wasm": "cd analysis && wasm-pack build --target web --out-dir ../src/wasm",
+    "build:tune": "cargo build -p tune --release",
+    "tune": "cargo run -p tune --release --"
   },
   "dependencies": {
     "react": "^18.3.1",

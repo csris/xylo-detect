@@ -1,0 +1,3 @@
+[workspace]
+members = ["analysis", "tools/tune"]
+resolver = "2"

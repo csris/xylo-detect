@@ -15,13 +15,12 @@ Both functions operate on the same frame grid: **25 ms frames with a 10 ms strid
 
 ```
 |←——— 25 ms ———→|
-|←——— 25 ms ———→|
         |←——— 25 ms ———→|
                 |←——— 25 ms ———→|
         ↑10 ms↑
 ```
 
-At 44 100 Hz this gives frames of 1 103 samples and a stride of 441 samples.
+At 44,100 Hz this gives frames of 1,103 samples and a stride of 441 samples.
 The frame count for a clip of *N* samples is:
 
 ```
@@ -45,7 +44,7 @@ For each frame:
    Only the positive-frequency half is kept (bins 0 … N/2).
 
 3. **Log magnitude** — take `ln(|X[k]|)` for each bin in the display frequency
-   range (currently 500–2 500 Hz).
+   range (currently 500–2,500 Hz).
 
 4. **Global normalisation** — shift and scale all values to \[0, 1\] across the
    entire clip so that the dynamic range fills the colour map.
@@ -87,14 +86,14 @@ centred on each target note:
 
 | Index | Note | Frequency (Hz) |
 |---|---|---|
-| 0 | C6 | 1 046.50 |
-| 1 | D6 | 1 174.66 |
-| 2 | E6 | 1 318.51 |
-| 3 | F6 | 1 396.91 |
-| 4 | G6 | 1 567.98 |
-| 5 | A6 | 1 760.00 |
-| 6 | B6 | 1 975.53 |
-| 7 | C7 | 2 093.00 |
+| 0 | C6 | 1,046.50 |
+| 1 | D6 | 1,174.66 |
+| 2 | E6 | 1,318.51 |
+| 3 | F6 | 1,396.91 |
+| 4 | G6 | 1,567.98 |
+| 5 | A6 | 1,760.00 |
+| 6 | B6 | 1,975.53 |
+| 7 | C7 | 2,093.00 |
 
 Filter edges are placed at the midpoint between adjacent centre frequencies,
 extrapolated symmetrically at the two ends.  Each filter rises linearly from
