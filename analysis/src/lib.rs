@@ -21,8 +21,8 @@ const NOTE_DOMINANCE_THRESHOLD: f32 = 0.25;
 // 10 ms stride to count as a new onset.
 const ONSET_FLUX_RATIO: f32 = 3.0;
 
-// Hold the predicted note for this many frames after an onset (~300 ms).
-const ONSET_HOLD_FRAMES: usize = 40;
+// Hold the predicted note for this many frames after an onset (~1200 ms).
+const ONSET_HOLD_FRAMES: usize = 120;
 
 // Temporal smoothing: half-window for the mode filter (full window = 2×N+1 frames = 50 ms).
 const SMOOTH_HALF_WIN: usize = 2;

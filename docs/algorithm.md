@@ -148,7 +148,7 @@ A threefold energy increase in a single 10 ms stride reliably catches the sharp
 attack of a struck bar.
 
 After an onset, the raw prediction is forwarded to the output for
-`ONSET_HOLD_FRAMES` frames (default 40 ≈ 400 ms), then suppressed until the
+`ONSET_HOLD_FRAMES` frames (default 120 ≈ 1200 ms), then suppressed until the
 next onset.  If a new onset is detected during the hold period the counter
 resets, so rapid successive notes are handled correctly.
 
@@ -188,5 +188,5 @@ All constants are defined at the top of `analysis/src/lib.rs`.
 | `ENERGY_THRESHOLD` | `0.01` | Raises the silence floor; more frames become NO_PREDICTION |
 | `NOTE_DOMINANCE_THRESHOLD` | `0.25` | Requires a clearer spectral peak; rejects more ambiguous frames |
 | `ONSET_FLUX_RATIO` | `3.0` | Requires a sharper energy rise to declare an onset; misses softer strikes |
-| `ONSET_HOLD_FRAMES` | `40` | Extends prediction blocks; captures more of the note's decay |
+| `ONSET_HOLD_FRAMES` | `120` | Extends prediction blocks; captures more of the note's decay |
 | `SMOOTH_HALF_WIN` | `2` | Wider smoothing window; fewer single-frame glitches but blurs boundaries |
