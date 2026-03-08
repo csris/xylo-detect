@@ -152,8 +152,12 @@ h1 {
   position: relative;
 }
 
-/* Scrollable canvas area — only the canvas scrolls, not the axis labels */
+/* Scrollable canvas area — only the canvas scrolls, not the axis labels.
+   flex: 1 / min-width: 0 apply when canvas-scroll is a direct flex child (piano roll);
+   inside the block-level wrapper (spectrogram) these are no-ops and width fills naturally. */
 .canvas-scroll {
+  flex: 1;
+  min-width: 0;
   overflow-x: scroll;
   scrollbar-width: thin;         /* Firefox */
   scrollbar-color: #555 #222;   /* Firefox */
@@ -226,4 +230,91 @@ canvas {
   color: #888;
   margin-top: 1rem;
   text-align: center;
+}
+
+/* ── Microphone button row ─────────────────────────────────────────────────── */
+
+.mic-row {
+  display: flex;
+  justify-content: center;
+  margin-top: -1rem;
+  margin-bottom: 2rem;
+}
+
+.mic-btn {
+  background: transparent;
+  border: 1px solid #555;
+  border-radius: 8px;
+  color: #ccc;
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0.5rem 1.25rem;
+  transition: border-color 0.2s, color 0.2s;
+}
+
+.mic-btn:hover:not(:disabled) {
+  border-color: #ff6b6b;
+  color: #ff6b6b;
+}
+
+.mic-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ── Recording / live note display ─────────────────────────────────────────── */
+
+.mic-display {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2rem;
+  padding: 4rem 2rem;
+}
+
+.mic-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.mic-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ff4444;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+
+.mic-note {
+  font-size: 8rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  transition: color 0.1s;
+}
+
+.mic-stop-btn {
+  background: #222;
+  border: 1px solid #555;
+  border-radius: 8px;
+  color: #ccc;
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0.6rem 1.5rem;
+  transition: border-color 0.2s, color 0.2s;
+}
+
+.mic-stop-btn:hover {
+  border-color: #ff6b6b;
+  color: #ff6b6b;
 }

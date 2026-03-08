@@ -1,6 +1,26 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import init, { analyze_audio, compute_spectrogram, spectrogram_num_bins } from './wasm/analysis'
 
+function encodePCMtoWAV(samples: Float32Array, sampleRate: number): Blob {
+  const numSamples = samples.length
+  const dataSize = numSamples * 2 // 16-bit mono
+  const buffer = new ArrayBuffer(44 + dataSize)
+  const v = new DataView(buffer)
+  const str = (off: number, s: string) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)) }
+  str(0, 'RIFF'); v.setUint32(4, 36 + dataSize, true); str(8, 'WAVE')
+  str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true)
+  v.setUint16(22, 1, true); v.setUint32(24, sampleRate, true)
+  v.setUint32(28, sampleRate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true)
+  str(36, 'data'); v.setUint32(40, dataSize, true)
+  let off = 44
+  for (let i = 0; i < numSamples; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]!))
+    v.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true)
+    off += 2
+  }
+  return new Blob([buffer], { type: 'audio/wav' })
+}
+
 const NOTES = ['C6', 'D6', 'E6', 'F6', 'G6', 'A6', 'B6', 'C7'] as const
 type NoteIndex = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7
 
@@ -21,10 +41,11 @@ const SPEC_FREQ_TICKS = [500, 1000, 1500, 2000, 2500] as const
 type AnalysisState =
   | { type: 'idle' }
   | { type: 'analyzing'; filename: string }
+  | { type: 'recording'; currentNote: number }
   | {
       type: 'done'
       filename: string
-      audioSrc: string
+      audioSrc: string | null
       frames: Uint8Array
       spectrogram: Float32Array
       spectrogramBins: number
@@ -37,6 +58,9 @@ const FRAME_WIDTH_PX = 4
 const ROW_HEIGHT_PX = 28
 const CANVAS_HEIGHT = NOTES.length * ROW_HEIGHT_PX
 const SPEC_HEIGHT_PX = 160
+
+// Number of 4096-sample ScriptProcessor chunks to keep for live note display (~0.5s at 48 kHz)
+const MIC_LIVE_CHUNKS = 6
 
 function infernoColor(t: number): readonly [number, number, number] {
   const stops = [
@@ -73,6 +97,13 @@ export default function App() {
   const audioUrlRef = useRef<string | null>(null)
   const specPanelRef = useRef<HTMLDivElement>(null)
   const rollPanelRef = useRef<HTMLDivElement>(null)
+
+  // Microphone capture refs
+  const mediaStreamRef = useRef<MediaStream | null>(null)
+  const micAudioCtxRef = useRef<AudioContext | null>(null)
+  const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null)
+  const micSamplesRef = useRef<Float32Array[]>([])
+  const micSampleRateRef = useRef<number>(48000)
 
   useEffect(() => {
     init().then(() => setWasmReady(true)).catch((e: unknown) => {
@@ -127,6 +158,108 @@ export default function App() {
       })
     } catch (e: unknown) {
       setState({ type: 'error', message: `Analysis failed: ${String(e)}` })
+    }
+  }, [wasmReady])
+
+  const stopMic = useCallback(() => {
+    // Disconnect ScriptProcessor immediately so no more onaudioprocess callbacks
+    if (scriptProcessorRef.current) {
+      scriptProcessorRef.current.disconnect()
+      scriptProcessorRef.current = null
+    }
+
+    // Snapshot accumulated samples
+    const chunks = micSamplesRef.current
+    micSamplesRef.current = []
+    const sr = micSampleRateRef.current
+
+    if (chunks.length === 0) {
+      setState({ type: 'idle' })
+    } else {
+      const totalLen = chunks.reduce((s, c) => s + c.length, 0)
+      const mono = new Float32Array(totalLen)
+      let offset = 0
+      for (const chunk of chunks) { mono.set(chunk, offset); offset += chunk.length }
+
+      const frames = analyze_audio(mono, sr)
+      const spectrogram = compute_spectrogram(mono, sr)
+      const spectrogramBins = spectrogram_num_bins(sr)
+
+      // Encode PCM as WAV so audio and analysis data are byte-for-byte identical
+      if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current)
+      const audioSrc = URL.createObjectURL(encodePCMtoWAV(mono, sr))
+      audioUrlRef.current = audioSrc
+
+      setState({
+        type: 'done',
+        filename: 'Microphone recording',
+        audioSrc,
+        frames,
+        spectrogram,
+        spectrogramBins,
+        durationSec: totalLen / sr,
+      })
+    }
+
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach(t => t.stop())
+      mediaStreamRef.current = null
+    }
+    if (micAudioCtxRef.current) {
+      void micAudioCtxRef.current.close()
+      micAudioCtxRef.current = null
+    }
+  }, [])
+
+  const startMic = useCallback(async () => {
+    if (!wasmReady) return
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      mediaStreamRef.current = stream
+
+      const audioCtx = new AudioContext()
+      micAudioCtxRef.current = audioCtx
+      micSampleRateRef.current = audioCtx.sampleRate
+      micSamplesRef.current = []
+
+      const source = audioCtx.createMediaStreamSource(stream)
+      // ScriptProcessorNode: 4096 samples ≈ 85 ms at 48 kHz
+      const processor = audioCtx.createScriptProcessor(4096, 1, 1)
+      scriptProcessorRef.current = processor
+
+      // Muted gain node so the mic doesn't echo through speakers
+      const silentGain = audioCtx.createGain()
+      silentGain.gain.value = 0
+
+      processor.onaudioprocess = (e) => {
+        const channelData = e.inputBuffer.getChannelData(0)
+        micSamplesRef.current.push(new Float32Array(channelData))
+
+        // Compute live note from recent audio
+        const recent = micSamplesRef.current.slice(-MIC_LIVE_CHUNKS)
+        const len = recent.reduce((s, c) => s + c.length, 0)
+        const buf = new Float32Array(len)
+        let off = 0
+        for (const c of recent) { buf.set(c, off); off += c.length }
+
+        const frames = analyze_audio(buf, audioCtx.sampleRate)
+        let currentNote = NO_PREDICTION
+        for (let i = frames.length - 1; i >= 0; i--) {
+          if ((frames[i] ?? NO_PREDICTION) !== NO_PREDICTION) {
+            currentNote = frames[i] ?? NO_PREDICTION
+            break
+          }
+        }
+        setState(prev => prev.type === 'recording' ? { ...prev, currentNote } : prev)
+      }
+
+      source.connect(processor)
+      processor.connect(silentGain)
+      silentGain.connect(audioCtx.destination)
+
+      setState({ type: 'recording', currentNote: NO_PREDICTION })
+    } catch (e: unknown) {
+      setState({ type: 'error', message: `Microphone access failed: ${String(e)}` })
     }
   }, [wasmReady])
 
@@ -267,7 +400,6 @@ export default function App() {
     }
 
     const handleSeeked = () => {
-      // Redraw immediately when scrubbing (RAF loop handles it during playback)
       if (rafId === null) drawCursor()
     }
 
@@ -276,7 +408,7 @@ export default function App() {
     audio.addEventListener('ended', handlePauseOrEnd)
     audio.addEventListener('seeked', handleSeeked)
 
-    drawCursor() // initial position at t=0
+    drawCursor()
 
     return () => {
       if (rafId !== null) cancelAnimationFrame(rafId)
@@ -323,6 +455,32 @@ export default function App() {
     if (file) void processFile(file)
   }, [processFile])
 
+  if (state.type === 'recording') {
+    const hasNote = state.currentNote !== NO_PREDICTION
+    const noteIdx = hasNote ? state.currentNote as NoteIndex : null
+    const noteName = noteIdx !== null ? NOTES[noteIdx] : null
+    const noteColor = noteIdx !== null ? NOTE_COLORS[noteIdx] : '#444'
+
+    return (
+      <div>
+        <h1>Xylo Detect</h1>
+        <p className="subtitle">Xylophone note detector — C6 to C7</p>
+        <div className="mic-display">
+          <div className="mic-indicator">
+            <span className="mic-dot" />
+            Recording
+          </div>
+          <div className="mic-note" style={{ color: noteColor }}>
+            {noteName ?? '—'}
+          </div>
+          <button className="mic-stop-btn" onClick={stopMic}>
+            Stop &amp; Analyze
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div>
       <h1>Xylo Detect</h1>
@@ -344,6 +502,16 @@ export default function App() {
         )}
       </div>
 
+      <div className="mic-row">
+        <button
+          className="mic-btn"
+          onClick={() => void startMic()}
+          disabled={!wasmReady}
+        >
+          Use Microphone
+        </button>
+      </div>
+
       {state.type === 'analyzing' && (
         <p className="status">Analyzing {state.filename}...</p>
       )}
@@ -357,15 +525,17 @@ export default function App() {
             {state.filename} — {state.frames.length} frames, {state.durationSec.toFixed(2)}s
           </p>
 
-          {/* Audio player */}
-          <div className="panel">
-            <audio
-              ref={audioRef}
-              src={state.audioSrc}
-              controls
-              className="audio-player"
-            />
-          </div>
+          {/* Audio player — only for file uploads (mic recordings have no audio blob) */}
+          {state.audioSrc && (
+            <div className="panel">
+              <audio
+                ref={audioRef}
+                src={state.audioSrc}
+                controls
+                className="audio-player"
+              />
+            </div>
+          )}
 
           {/* Spectrogram with cursor overlay */}
           <div className="panel">
@@ -388,11 +558,13 @@ export default function App() {
                 <div ref={specPanelRef} className="canvas-scroll">
                   <div className="canvas-stack">
                     <canvas ref={spectrogramRef} style={{ height: `${SPEC_HEIGHT_PX}px` }} />
-                    <canvas
-                      ref={cursorCanvasRef}
-                      style={{ height: `${SPEC_HEIGHT_PX}px` }}
-                      className="cursor-canvas"
-                    />
+                    {state.audioSrc && (
+                      <canvas
+                        ref={cursorCanvasRef}
+                        style={{ height: `${SPEC_HEIGHT_PX}px` }}
+                        className="cursor-canvas"
+                      />
+                    )}
                   </div>
                 </div>
                 <div className="note-freq-labels" style={{ height: SPEC_HEIGHT_PX }}>
