@@ -145,7 +145,7 @@ export default function App() {
 
       // Encode PCM as WAV so audio and analysis data are byte-for-byte identical
       if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current)
-      const audioSrc = URL.createObjectURL(new Blob([encode_pcm_to_wav(mono, sr)], { type: 'audio/wav' }))
+      const audioSrc = URL.createObjectURL(new Blob([encode_pcm_to_wav(mono, sr).slice()], { type: 'audio/wav' }))
       audioUrlRef.current = audioSrc
 
       setState({
