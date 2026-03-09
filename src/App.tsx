@@ -1,25 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import init, { analyze_audio, compute_spectrogram, spectrogram_num_bins } from './wasm/analysis'
-
-function encodePCMtoWAV(samples: Float32Array, sampleRate: number): Blob {
-  const numSamples = samples.length
-  const dataSize = numSamples * 2 // 16-bit mono
-  const buffer = new ArrayBuffer(44 + dataSize)
-  const v = new DataView(buffer)
-  const str = (off: number, s: string) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)) }
-  str(0, 'RIFF'); v.setUint32(4, 36 + dataSize, true); str(8, 'WAVE')
-  str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true)
-  v.setUint16(22, 1, true); v.setUint32(24, sampleRate, true)
-  v.setUint32(28, sampleRate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true)
-  str(36, 'data'); v.setUint32(40, dataSize, true)
-  let off = 44
-  for (let i = 0; i < numSamples; i++) {
-    const s = Math.max(-1, Math.min(1, samples[i]!))
-    v.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true)
-    off += 2
-  }
-  return new Blob([buffer], { type: 'audio/wav' })
-}
+import init, { analyze_audio, compute_spectrogram, spectrogram_num_bins, encode_pcm_to_wav } from './wasm/analysis'
+import { infernoColor } from './utils'
 
 const NOTES = ['C6', 'D6', 'E6', 'F6', 'G6', 'A6', 'B6', 'C7'] as const
 type NoteIndex = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7
@@ -61,29 +42,6 @@ const SPEC_HEIGHT_PX = 160
 
 // Number of 4096-sample ScriptProcessor chunks to keep for live note display (~0.5s at 48 kHz)
 const MIC_LIVE_CHUNKS = 6
-
-function infernoColor(t: number): readonly [number, number, number] {
-  const stops = [
-    [0.00,   0,   0,   4],
-    [0.25,  58,   9,  99],
-    [0.50, 188,  55,  84],
-    [0.75, 252, 137,  97],
-    [1.00, 252, 255, 164],
-  ] as const
-  if (t <= 0) return [0, 0, 4]
-  if (t >= 1) return [252, 255, 164]
-  let i = 1
-  while (i < stops.length - 1 && (stops[i]?.[0] ?? 0) < t) i++
-  const s0 = stops[i - 1]
-  const s1 = stops[i]
-  if (!s0 || !s1) return [0, 0, 0]
-  const u = (t - s0[0]) / (s1[0] - s0[0])
-  return [
-    Math.round(s0[1] + u * (s1[1] - s0[1])),
-    Math.round(s0[2] + u * (s1[2] - s0[2])),
-    Math.round(s0[3] + u * (s1[3] - s0[3])),
-  ]
-}
 
 export default function App() {
   const [wasmReady, setWasmReady] = useState(false)
@@ -187,7 +145,7 @@ export default function App() {
 
       // Encode PCM as WAV so audio and analysis data are byte-for-byte identical
       if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current)
-      const audioSrc = URL.createObjectURL(encodePCMtoWAV(mono, sr))
+      const audioSrc = URL.createObjectURL(new Blob([encode_pcm_to_wav(mono, sr)], { type: 'audio/wav' }))
       audioUrlRef.current = audioSrc
 
       setState({

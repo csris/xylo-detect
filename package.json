@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "build:wasm": "cd analysis && wasm-pack build --target web --out-dir ../src/wasm",
     "build:tune": "cargo build -p tune --release",
-    "tune": "cargo run -p tune --release --"
+    "tune": "cargo run -p tune --release --",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -22,6 +24,7 @@
     "typescript": "^5.6.2",
     "vite": "^6.0.5",
     "vite-plugin-wasm": "^3.4.1",
-    "vite-plugin-top-level-await": "^1.4.4"
+    "vite-plugin-top-level-await": "^1.4.4",
+    "vitest": "^3.0.0"
   }
 }

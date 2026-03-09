@@ -290,6 +290,45 @@ pub fn compute_spectrogram(samples: &[f32], sample_rate: f32) -> Vec<f32> {
     raw
 }
 
+/// Encode mono f32 PCM samples as a 16-bit mono WAV file.
+///
+/// Returns the raw WAV bytes. On the JS side, wrap with
+/// `new Blob([result], { type: 'audio/wav' })` to get a playable blob.
+/// The encoded samples use the same clamping and scaling as the TypeScript
+/// version: positive samples scale to 0x7FFF, negative to 0x8000.
+#[wasm_bindgen]
+pub fn encode_pcm_to_wav(samples: &[f32], sample_rate: u32) -> Vec<u8> {
+    let num_samples = samples.len();
+    let data_size = (num_samples * 2) as u32;
+    let mut buf = Vec::with_capacity(44 + num_samples * 2);
+
+    buf.extend_from_slice(b"RIFF");
+    buf.extend_from_slice(&(36 + data_size).to_le_bytes());
+    buf.extend_from_slice(b"WAVE");
+    buf.extend_from_slice(b"fmt ");
+    buf.extend_from_slice(&16u32.to_le_bytes()); // subchunk1 size (PCM)
+    buf.extend_from_slice(&1u16.to_le_bytes());  // audio format = PCM
+    buf.extend_from_slice(&1u16.to_le_bytes());  // num channels = mono
+    buf.extend_from_slice(&sample_rate.to_le_bytes());
+    buf.extend_from_slice(&(sample_rate * 2).to_le_bytes()); // byte rate
+    buf.extend_from_slice(&2u16.to_le_bytes());  // block align
+    buf.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
+    buf.extend_from_slice(b"data");
+    buf.extend_from_slice(&data_size.to_le_bytes());
+
+    for &s in samples {
+        let clamped = s.max(-1.0).min(1.0);
+        let pcm: i16 = if clamped < 0.0 {
+            (clamped * 0x8000u16 as f32) as i16
+        } else {
+            (clamped * 0x7FFFu16 as f32) as i16
+        };
+        buf.extend_from_slice(&pcm.to_le_bytes());
+    }
+
+    buf
+}
+
 // ── Filterbank ────────────────────────────────────────────────────────────────
 
 /// Build a triangular filterbank: one filter per note, length = frame_size/2 + 1.
@@ -328,4 +367,535 @@ fn build_filterbank(frame_size: usize, sample_rate: f32) -> Vec<Vec<f32>> {
         filters.push(filter);
     }
     filters
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SR: f32 = 48_000.0;
+
+    fn make_sine(freq: f32, duration_secs: f32, amplitude: f32) -> Vec<f32> {
+        let n = (duration_secs * SR) as usize;
+        (0..n)
+            .map(|i| amplitude * (2.0 * std::f32::consts::PI * freq * i as f32 / SR).sin())
+            .collect()
+    }
+
+    /// Returns the most common non-NO_PREDICTION note across pass3 of all frames.
+    fn dominant_pass3(frames: &[FrameStats]) -> Option<u8> {
+        let mut counts = [0usize; 8];
+        for f in frames {
+            if f.pass3 != NO_PREDICTION {
+                counts[f.pass3 as usize] += 1;
+            }
+        }
+        counts
+            .iter()
+            .enumerate()
+            .filter(|(_, &c)| c > 0)
+            .max_by_key(|(_, &c)| c)
+            .map(|(i, _)| i as u8)
+    }
+
+    // ── hann_window ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn hann_endpoints_are_zero() {
+        let w = hann_window(1200);
+        assert!(w[0] < 1e-6, "w[0] = {}", w[0]);
+        assert!(w[1199] < 1e-6, "w[1199] = {}", w[1199]);
+    }
+
+    #[test]
+    fn hann_peak_near_center() {
+        let w = hann_window(1024);
+        let peak = w
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .map(|(i, _)| i)
+            .unwrap();
+        assert!((peak as isize - 511).abs() <= 1, "peak at {peak}, expected ~511");
+    }
+
+    #[test]
+    fn hann_values_in_unit_interval() {
+        assert!(hann_window(1200).iter().all(|&v| v >= 0.0 && v <= 1.0));
+    }
+
+    #[test]
+    fn hann_is_symmetric() {
+        let w = hann_window(1200);
+        for i in 0..600 {
+            assert!((w[i] - w[1199 - i]).abs() < 1e-6, "asymmetry at {i}");
+        }
+    }
+
+    #[test]
+    fn hann_monotone_in_first_half() {
+        let w = hann_window(1200);
+        for i in 0..599 {
+            assert!(w[i] <= w[i + 1], "not monotone at {i}: {} > {}", w[i], w[i + 1]);
+        }
+    }
+
+    #[test]
+    fn hann_no_nan_or_inf() {
+        assert!(hann_window(4096).iter().all(|v| v.is_finite()));
+    }
+
+    // ── frame_count ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn frame_count_empty_input() {
+        assert_eq!(frame_count(0, 1200, 480), 0);
+    }
+
+    #[test]
+    fn frame_count_shorter_than_frame() {
+        assert_eq!(frame_count(1199, 1200, 480), 0);
+    }
+
+    #[test]
+    fn frame_count_exactly_one_frame() {
+        assert_eq!(frame_count(1200, 1200, 480), 1);
+    }
+
+    #[test]
+    fn frame_count_two_frames() {
+        assert_eq!(frame_count(1680, 1200, 480), 2); // 1200 + 480
+    }
+
+    #[test]
+    fn frame_count_one_second_at_48k() {
+        let fs = (0.025 * SR).round() as usize; // 1200
+        let st = (0.010 * SR).round() as usize; // 480
+        let n = SR as usize;                     // 48000
+        let expected = (n - fs) / st + 1;        // 98
+        assert_eq!(frame_count(n, fs, st), expected);
+    }
+
+    #[test]
+    fn frame_count_non_overlapping() {
+        // stride = frame_size → non-overlapping windows
+        assert_eq!(frame_count(4800, 1200, 1200), 4);
+    }
+
+    // ── build_filterbank ──────────────────────────────────────────────────────
+
+    #[test]
+    fn filterbank_has_eight_filters() {
+        let fs = (0.025 * SR).round() as usize;
+        assert_eq!(build_filterbank(fs, SR).len(), 8);
+    }
+
+    #[test]
+    fn filterbank_filter_lengths() {
+        let fs = (0.025 * SR).round() as usize;
+        let expected = fs / 2 + 1;
+        for (i, f) in build_filterbank(fs, SR).iter().enumerate() {
+            assert_eq!(f.len(), expected, "filter {i} has wrong length");
+        }
+    }
+
+    #[test]
+    fn filterbank_values_in_unit_interval() {
+        let fs = (0.025 * SR).round() as usize;
+        for (i, f) in build_filterbank(fs, SR).iter().enumerate() {
+            for (j, &v) in f.iter().enumerate() {
+                assert!(v >= 0.0 && v <= 1.0, "filter {i} bin {j} = {v}");
+            }
+        }
+    }
+
+    #[test]
+    fn filterbank_each_filter_has_nonzero_weights() {
+        let fs = (0.025 * SR).round() as usize;
+        for (i, f) in build_filterbank(fs, SR).iter().enumerate() {
+            assert!(f.iter().any(|&v| v > 0.0), "filter {i} is all zeros");
+        }
+    }
+
+    #[test]
+    fn filterbank_peaks_near_note_frequencies() {
+        let fs = (0.025 * SR).round() as usize;
+        let bin_hz = SR / fs as f32;
+        for (n, f) in build_filterbank(fs, SR).iter().enumerate() {
+            let peak_bin = f
+                .iter()
+                .enumerate()
+                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                .map(|(i, _)| i)
+                .unwrap();
+            let peak_freq = peak_bin as f32 * bin_hz;
+            let expected = NOTE_FREQS[n];
+            assert!(
+                (peak_freq - expected).abs() <= bin_hz,
+                "filter {n} peak at {peak_freq} Hz, expected near {expected} Hz"
+            );
+        }
+    }
+
+    #[test]
+    fn filterbank_no_nan_or_inf() {
+        let fs = (0.025 * SR).round() as usize;
+        for f in build_filterbank(fs, SR).iter() {
+            assert!(f.iter().all(|v| v.is_finite()));
+        }
+    }
+
+    // ── analyze_full — silence / edge cases ───────────────────────────────────
+
+    #[test]
+    fn silent_input_all_no_prediction() {
+        let silence = vec![0.0f32; 48000];
+        let frames = analyze_full(&silence, SR);
+        assert!(!frames.is_empty());
+        assert!(frames.iter().all(|f| f.pass1 == NO_PREDICTION));
+        assert!(frames.iter().all(|f| f.pass2 == NO_PREDICTION));
+        assert!(frames.iter().all(|f| f.pass3 == NO_PREDICTION));
+    }
+
+    #[test]
+    fn empty_input_zero_frames() {
+        assert_eq!(analyze_full(&[], SR).len(), 0);
+    }
+
+    #[test]
+    fn too_short_input_zero_frames() {
+        assert_eq!(analyze_full(&[0.0f32; 100], SR).len(), 0);
+    }
+
+    #[test]
+    fn frame_count_matches_formula() {
+        let signal = make_sine(NOTE_FREQS[0], 2.0, 0.5);
+        let fs = (0.025 * SR).round() as usize;
+        let st = (0.010 * SR).round() as usize;
+        assert_eq!(analyze_full(&signal, SR).len(), frame_count(signal.len(), fs, st));
+    }
+
+    #[test]
+    fn sub_threshold_amplitude_is_silent() {
+        // RMS of sine amplitude A = A/√2 ≈ 0.00354 < ENERGY_THRESHOLD 0.01
+        let signal = make_sine(NOTE_FREQS[0], 1.0, 0.005);
+        let frames = analyze_full(&signal, SR);
+        assert!(frames.iter().all(|f| f.rms < ENERGY_THRESHOLD));
+        assert!(frames.iter().all(|f| f.pass1 == NO_PREDICTION));
+    }
+
+    #[test]
+    fn rms_is_nonnegative() {
+        let signal = make_sine(NOTE_FREQS[0], 1.0, 0.5);
+        assert!(analyze_full(&signal, SR).iter().all(|f| f.rms >= 0.0));
+    }
+
+    #[test]
+    fn dominance_in_unit_interval() {
+        let signal = make_sine(NOTE_FREQS[0], 1.0, 0.5);
+        assert!(analyze_full(&signal, SR)
+            .iter()
+            .all(|f| f.dominance >= 0.0 && f.dominance <= 1.0));
+    }
+
+    #[test]
+    fn note_energy_is_nonnegative() {
+        let signal = make_sine(NOTE_FREQS[0], 1.0, 0.5);
+        assert!(analyze_full(&signal, SR).iter().all(|f| f.note_energy >= 0.0));
+    }
+
+    #[test]
+    fn analyze_full_is_deterministic() {
+        let signal = make_sine(NOTE_FREQS[0], 1.0, 0.5);
+        let p3_a: Vec<u8> = analyze_full(&signal, SR).iter().map(|f| f.pass3).collect();
+        let p3_b: Vec<u8> = analyze_full(&signal, SR).iter().map(|f| f.pass3).collect();
+        assert_eq!(p3_a, p3_b);
+    }
+
+    // ── Note detection — one test per note ────────────────────────────────────
+
+    #[test]
+    fn detects_c6() {
+        assert_eq!(dominant_pass3(&analyze_full(&make_sine(NOTE_FREQS[0], 2.0, 0.5), SR)), Some(0));
+    }
+
+    #[test]
+    fn detects_d6() {
+        assert_eq!(dominant_pass3(&analyze_full(&make_sine(NOTE_FREQS[1], 2.0, 0.5), SR)), Some(1));
+    }
+
+    #[test]
+    fn detects_e6() {
+        assert_eq!(dominant_pass3(&analyze_full(&make_sine(NOTE_FREQS[2], 2.0, 0.5), SR)), Some(2));
+    }
+
+    #[test]
+    fn detects_f6() {
+        assert_eq!(dominant_pass3(&analyze_full(&make_sine(NOTE_FREQS[3], 2.0, 0.5), SR)), Some(3));
+    }
+
+    #[test]
+    fn detects_g6() {
+        assert_eq!(dominant_pass3(&analyze_full(&make_sine(NOTE_FREQS[4], 2.0, 0.5), SR)), Some(4));
+    }
+
+    #[test]
+    fn detects_a6() {
+        assert_eq!(dominant_pass3(&analyze_full(&make_sine(NOTE_FREQS[5], 2.0, 0.5), SR)), Some(5));
+    }
+
+    #[test]
+    fn detects_b6() {
+        assert_eq!(dominant_pass3(&analyze_full(&make_sine(NOTE_FREQS[6], 2.0, 0.5), SR)), Some(6));
+    }
+
+    #[test]
+    fn detects_c7() {
+        assert_eq!(dominant_pass3(&analyze_full(&make_sine(NOTE_FREQS[7], 2.0, 0.5), SR)), Some(7));
+    }
+
+    // ── analyze_audio wrapper ─────────────────────────────────────────────────
+
+    #[test]
+    fn analyze_audio_equals_pass3() {
+        let signal = make_sine(NOTE_FREQS[0], 1.0, 0.5);
+        let expected: Vec<u8> = analyze_full(&signal, SR).iter().map(|f| f.pass3).collect();
+        assert_eq!(analyze_audio(&signal, SR), expected);
+    }
+
+    #[test]
+    fn analyze_audio_length_matches_formula() {
+        let signal = make_sine(NOTE_FREQS[0], 1.0, 0.5);
+        let fs = (0.025 * SR).round() as usize;
+        let st = (0.010 * SR).round() as usize;
+        assert_eq!(analyze_audio(&signal, SR).len(), frame_count(signal.len(), fs, st));
+    }
+
+    #[test]
+    fn analyze_audio_values_are_valid() {
+        let signal = make_sine(NOTE_FREQS[0], 1.0, 0.5);
+        assert!(analyze_audio(&signal, SR)
+            .iter()
+            .all(|&b| b <= 7 || b == NO_PREDICTION));
+    }
+
+    // ── Onset detection ───────────────────────────────────────────────────────
+
+    #[test]
+    fn onset_fires_at_frame_zero() {
+        let signal = make_sine(NOTE_FREQS[0], 1.0, 0.5);
+        let frames = analyze_full(&signal, SR);
+        assert!(frames[0].onset, "onset should fire at frame 0 when signal starts loud");
+    }
+
+    #[test]
+    fn onset_fires_after_silence() {
+        // 20 frames of silence, then tone
+        let st = (0.010 * SR).round() as usize;
+        let fs = (0.025 * SR).round() as usize;
+        let silence_samples = 20 * st + (fs - st);
+        let mut signal = vec![0.0f32; silence_samples];
+        signal.extend(make_sine(NOTE_FREQS[0], 1.5, 0.5));
+        let frames = analyze_full(&signal, SR);
+        let first_onset = frames.iter().position(|f| f.onset).expect("no onset found");
+        // Onset should be near frame 20 (within ±2 due to frame alignment)
+        assert!(
+            (first_onset as isize - 20).abs() <= 2,
+            "onset at frame {first_onset}, expected ~20"
+        );
+    }
+
+    #[test]
+    fn hold_window_passes_predictions() {
+        let signal = make_sine(NOTE_FREQS[0], 2.0, 0.5);
+        let frames = analyze_full(&signal, SR);
+        for i in 0..ONSET_HOLD_FRAMES.min(frames.len()) {
+            assert_ne!(frames[i].pass2, NO_PREDICTION, "frame {i} inside hold window has no prediction");
+        }
+    }
+
+    #[test]
+    fn steady_tone_no_prediction_after_hold_expires() {
+        let signal = make_sine(NOTE_FREQS[0], 2.0, 0.5);
+        let frames = analyze_full(&signal, SR);
+        if frames.len() > ONSET_HOLD_FRAMES + 5 {
+            // A steady sine has flux ≈ 1.0 after frame 0, so no second onset fires.
+            // Frames beyond the hold window should get NO_PREDICTION from pass2.
+            let check = ONSET_HOLD_FRAMES + 3;
+            assert_eq!(
+                frames[check].pass2, NO_PREDICTION,
+                "frame {check} after hold window should be NO_PREDICTION"
+            );
+        }
+    }
+
+    // ── encode_pcm_to_wav ─────────────────────────────────────────────────────
+
+    #[test]
+    fn wav_total_size() {
+        for n in [0usize, 1, 100, 44100] {
+            assert_eq!(encode_pcm_to_wav(&vec![0.0f32; n], 48000).len(), 44 + n * 2);
+        }
+    }
+
+    #[test]
+    fn wav_riff_magic() {
+        assert_eq!(&encode_pcm_to_wav(&[], 48000)[0..4], b"RIFF");
+    }
+
+    #[test]
+    fn wav_wave_magic() {
+        assert_eq!(&encode_pcm_to_wav(&[], 48000)[8..12], b"WAVE");
+    }
+
+    #[test]
+    fn wav_fmt_marker() {
+        assert_eq!(&encode_pcm_to_wav(&[], 48000)[12..16], b"fmt ");
+    }
+
+    #[test]
+    fn wav_data_marker() {
+        assert_eq!(&encode_pcm_to_wav(&[], 48000)[36..40], b"data");
+    }
+
+    #[test]
+    fn wav_riff_chunk_size() {
+        let n = 200usize;
+        let wav = encode_pcm_to_wav(&vec![0.0f32; n], 48000);
+        let size = u32::from_le_bytes(wav[4..8].try_into().unwrap());
+        assert_eq!(size, (36 + n * 2) as u32);
+    }
+
+    #[test]
+    fn wav_pcm_format() {
+        let wav = encode_pcm_to_wav(&[], 48000);
+        assert_eq!(u16::from_le_bytes(wav[20..22].try_into().unwrap()), 1);
+    }
+
+    #[test]
+    fn wav_mono_channel() {
+        let wav = encode_pcm_to_wav(&[], 48000);
+        assert_eq!(u16::from_le_bytes(wav[22..24].try_into().unwrap()), 1);
+    }
+
+    #[test]
+    fn wav_sample_rate_field() {
+        for sr in [44100u32, 48000] {
+            let wav = encode_pcm_to_wav(&[0.0f32; 10], sr);
+            assert_eq!(u32::from_le_bytes(wav[24..28].try_into().unwrap()), sr);
+        }
+    }
+
+    #[test]
+    fn wav_byte_rate() {
+        let sr = 48000u32;
+        let wav = encode_pcm_to_wav(&[0.0f32; 10], sr);
+        assert_eq!(u32::from_le_bytes(wav[28..32].try_into().unwrap()), sr * 2);
+    }
+
+    #[test]
+    fn wav_block_align() {
+        let wav = encode_pcm_to_wav(&[0.0f32; 10], 48000);
+        assert_eq!(u16::from_le_bytes(wav[32..34].try_into().unwrap()), 2);
+    }
+
+    #[test]
+    fn wav_bits_per_sample() {
+        let wav = encode_pcm_to_wav(&[0.0f32; 10], 48000);
+        assert_eq!(u16::from_le_bytes(wav[34..36].try_into().unwrap()), 16);
+    }
+
+    #[test]
+    fn wav_data_chunk_size() {
+        let n = 300usize;
+        let wav = encode_pcm_to_wav(&vec![0.0f32; n], 48000);
+        assert_eq!(u32::from_le_bytes(wav[40..44].try_into().unwrap()), (n * 2) as u32);
+    }
+
+    #[test]
+    fn wav_zero_sample_encodes_zero() {
+        let wav = encode_pcm_to_wav(&[0.0f32], 48000);
+        assert_eq!(i16::from_le_bytes(wav[44..46].try_into().unwrap()), 0);
+    }
+
+    #[test]
+    fn wav_positive_full_scale() {
+        let wav = encode_pcm_to_wav(&[1.0f32], 48000);
+        assert_eq!(i16::from_le_bytes(wav[44..46].try_into().unwrap()), 0x7FFF);
+    }
+
+    #[test]
+    fn wav_negative_full_scale() {
+        let wav = encode_pcm_to_wav(&[-1.0f32], 48000);
+        assert_eq!(i16::from_le_bytes(wav[44..46].try_into().unwrap()), -0x8000i16);
+    }
+
+    #[test]
+    fn wav_clamping_above() {
+        let wav = encode_pcm_to_wav(&[2.0f32], 48000);
+        assert_eq!(i16::from_le_bytes(wav[44..46].try_into().unwrap()), 0x7FFF);
+    }
+
+    #[test]
+    fn wav_clamping_below() {
+        let wav = encode_pcm_to_wav(&[-2.0f32], 48000);
+        assert_eq!(i16::from_le_bytes(wav[44..46].try_into().unwrap()), -0x8000i16);
+    }
+
+    #[test]
+    fn wav_multi_sample_ordering() {
+        let wav = encode_pcm_to_wav(&[0.0f32, 1.0, -1.0], 48000);
+        assert_eq!(i16::from_le_bytes(wav[44..46].try_into().unwrap()), 0);
+        assert_eq!(i16::from_le_bytes(wav[46..48].try_into().unwrap()), 0x7FFF);
+        assert_eq!(i16::from_le_bytes(wav[48..50].try_into().unwrap()), -0x8000i16);
+    }
+
+    // ── compute_spectrogram ───────────────────────────────────────────────────
+
+    #[test]
+    fn spectrogram_num_bins_is_positive() {
+        assert!(spectrogram_num_bins(SR) > 0);
+        assert!(spectrogram_num_bins(44_100.0) > 0);
+    }
+
+    #[test]
+    fn spectrogram_length_is_frames_times_bins() {
+        let signal = make_sine(NOTE_FREQS[0], 1.0, 0.5);
+        let fs = (0.025 * SR).round() as usize;
+        let st = (0.010 * SR).round() as usize;
+        let nf = frame_count(signal.len(), fs, st);
+        let nb = spectrogram_num_bins(SR);
+        assert_eq!(compute_spectrogram(&signal, SR).len(), nf * nb);
+    }
+
+    #[test]
+    fn spectrogram_values_normalized_to_unit_interval() {
+        let signal = make_sine(NOTE_FREQS[0], 1.0, 0.5);
+        assert!(compute_spectrogram(&signal, SR).iter().all(|&v| v >= 0.0 && v <= 1.0));
+    }
+
+    #[test]
+    fn spectrogram_no_nan_or_inf() {
+        let signal = make_sine(NOTE_FREQS[0], 1.0, 0.5);
+        assert!(compute_spectrogram(&signal, SR).iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn spectrogram_all_zeros_input_returns_all_zeros() {
+        // All samples 0 → raw values all ln(1e-6), min==max → normalized to 0.
+        let signal = vec![0.0f32; 48000];
+        assert!(compute_spectrogram(&signal, SR).iter().all(|&v| v.abs() < 1e-5));
+    }
+
+    #[test]
+    fn spectrogram_num_bins_consistent_with_output_row_width() {
+        let signal = make_sine(NOTE_FREQS[0], 1.0, 0.5);
+        let fs = (0.025 * SR).round() as usize;
+        let st = (0.010 * SR).round() as usize;
+        let nf = frame_count(signal.len(), fs, st);
+        let spec = compute_spectrogram(&signal, SR);
+        assert_eq!(spec.len() / nf, spectrogram_num_bins(SR));
+    }
 }
