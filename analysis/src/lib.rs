@@ -1,5 +1,5 @@
+use rustfft::{num_complex::Complex, FftPlanner};
 use wasm_bindgen::prelude::*;
-use rustfft::{FftPlanner, num_complex::Complex};
 
 // Xylophone notes C6 to C7 (8 notes) with frequencies in Hz
 const NOTE_FREQS: [f32; 8] = [
@@ -66,8 +66,7 @@ pub struct FrameStats {
 fn hann_window(frame_size: usize) -> Vec<f32> {
     (0..frame_size)
         .map(|i| {
-            0.5 * (1.0
-                - (2.0 * std::f32::consts::PI * i as f32 / (frame_size - 1) as f32).cos())
+            0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / (frame_size - 1) as f32).cos())
         })
         .collect()
 }
@@ -95,19 +94,19 @@ fn frame_count(num_samples: usize, frame_size: usize, stride: usize) -> usize {
 ///   Pass 3 – temporal smoothing: mode filter over a ±SMOOTH_HALF_WIN window
 pub fn analyze_full(samples: &[f32], sample_rate: f32) -> Vec<FrameStats> {
     let frame_size = (0.025 * sample_rate).round() as usize;
-    let stride     = (0.010 * sample_rate).round() as usize;
-    let hann       = hann_window(frame_size);
+    let stride = (0.010 * sample_rate).round() as usize;
+    let hann = hann_window(frame_size);
     let mut planner = FftPlanner::<f32>::new();
-    let fft         = planner.plan_fft_forward(frame_size);
-    let filters     = build_filterbank(frame_size, sample_rate);
-    let num_frames  = frame_count(samples.len(), frame_size, stride);
+    let fft = planner.plan_fft_forward(frame_size);
+    let filters = build_filterbank(frame_size, sample_rate);
+    let num_frames = frame_count(samples.len(), frame_size, stride);
 
     // ── Pass 1 ───────────────────────────────────────────────────────────────
-    let mut winner_vec  = Vec::with_capacity(num_frames);
-    let mut pass1       = Vec::with_capacity(num_frames);
+    let mut winner_vec = Vec::with_capacity(num_frames);
+    let mut pass1 = Vec::with_capacity(num_frames);
     let mut note_energy = Vec::with_capacity(num_frames);
-    let mut rms_vec     = Vec::with_capacity(num_frames);
-    let mut dom_vec     = Vec::with_capacity(num_frames);
+    let mut rms_vec = Vec::with_capacity(num_frames);
+    let mut dom_vec = Vec::with_capacity(num_frames);
 
     for f in 0..num_frames {
         let start = f * stride;
@@ -136,7 +135,11 @@ pub fn analyze_full(samples: &[f32], sample_rate: f32) -> Vec<FrameStats> {
 
         let mut energies = [0.0f32; 8];
         for (i, filter) in filters.iter().enumerate() {
-            energies[i] = filter.iter().zip(mag.iter()).map(|(&w, &m)| w * m * m).sum();
+            energies[i] = filter
+                .iter()
+                .zip(mag.iter())
+                .map(|(&w, &m)| w * m * m)
+                .sum();
         }
 
         let total: f32 = energies.iter().sum();
@@ -161,11 +164,11 @@ pub fn analyze_full(samples: &[f32], sample_rate: f32) -> Vec<FrameStats> {
     }
 
     // ── Pass 2: onset gating ──────────────────────────────────────────────────
-    let mut pass2      = vec![NO_PREDICTION; num_frames];
+    let mut pass2 = vec![NO_PREDICTION; num_frames];
     let mut hold: usize = 0;
-    let mut prev_e     = 0.0f32;
-    let mut onset_vec  = vec![false; num_frames];
-    let mut flux_vec   = vec![0.0f32; num_frames];
+    let mut prev_e = 0.0f32;
+    let mut onset_vec = vec![false; num_frames];
+    let mut flux_vec = vec![0.0f32; num_frames];
 
     for f in 0..num_frames {
         let curr_e = note_energy[f];
@@ -185,7 +188,7 @@ pub fn analyze_full(samples: &[f32], sample_rate: f32) -> Vec<FrameStats> {
 
     // ── Pass 3: temporal mode filter ──────────────────────────────────────────
     let mut pass3 = vec![NO_PREDICTION; num_frames];
-    for f in 0..num_frames {
+    for (f, out) in pass3.iter_mut().enumerate() {
         let lo = f.saturating_sub(SMOOTH_HALF_WIN);
         let hi = (f + SMOOTH_HALF_WIN + 1).min(num_frames);
         let mut counts = [0u32; 8];
@@ -200,22 +203,22 @@ pub fn analyze_full(samples: &[f32], sample_rate: f32) -> Vec<FrameStats> {
             .filter(|(_, &c)| c > 0)
             .max_by_key(|(_, &c)| c)
         {
-            pass3[f] = note as u8;
+            *out = note as u8;
         }
     }
 
     // ── Assemble ──────────────────────────────────────────────────────────────
     (0..num_frames)
         .map(|f| FrameStats {
-            rms:         rms_vec[f],
-            winner:      winner_vec[f],
-            pass1:       pass1[f],
-            pass2:       pass2[f],
-            pass3:       pass3[f],
-            dominance:   dom_vec[f],
+            rms: rms_vec[f],
+            winner: winner_vec[f],
+            pass1: pass1[f],
+            pass2: pass2[f],
+            pass3: pass3[f],
+            dominance: dom_vec[f],
             note_energy: note_energy[f],
-            flux:        flux_vec[f],
-            onset:       onset_vec[f],
+            flux: flux_vec[f],
+            onset: onset_vec[f],
         })
         .collect()
 }
@@ -307,17 +310,17 @@ pub fn encode_pcm_to_wav(samples: &[f32], sample_rate: u32) -> Vec<u8> {
     buf.extend_from_slice(b"WAVE");
     buf.extend_from_slice(b"fmt ");
     buf.extend_from_slice(&16u32.to_le_bytes()); // subchunk1 size (PCM)
-    buf.extend_from_slice(&1u16.to_le_bytes());  // audio format = PCM
-    buf.extend_from_slice(&1u16.to_le_bytes());  // num channels = mono
+    buf.extend_from_slice(&1u16.to_le_bytes()); // audio format = PCM
+    buf.extend_from_slice(&1u16.to_le_bytes()); // num channels = mono
     buf.extend_from_slice(&sample_rate.to_le_bytes());
     buf.extend_from_slice(&(sample_rate * 2).to_le_bytes()); // byte rate
-    buf.extend_from_slice(&2u16.to_le_bytes());  // block align
+    buf.extend_from_slice(&2u16.to_le_bytes()); // block align
     buf.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
     buf.extend_from_slice(b"data");
     buf.extend_from_slice(&data_size.to_le_bytes());
 
     for &s in samples {
-        let clamped = s.max(-1.0).min(1.0);
+        let clamped = s.clamp(-1.0, 1.0);
         let pcm: i16 = if clamped < 0.0 {
             (clamped * 0x8000u16 as f32) as i16
         } else {
@@ -354,9 +357,9 @@ fn build_filterbank(frame_size: usize, sample_rate: f32) -> Vec<Vec<f32>> {
         let f_center = centers[n];
         let f_right = edges[n + 1];
         let mut filter = vec![0.0f32; half];
-        for bin in 0..half {
+        for (bin, val) in filter.iter_mut().enumerate() {
             let freq = bin as f32 * bin_hz;
-            filter[bin] = if freq >= f_left && freq <= f_center {
+            *val = if freq >= f_left && freq <= f_center {
                 (freq - f_left) / (f_center - f_left)
             } else if freq > f_center && freq <= f_right {
                 (f_right - freq) / (f_right - f_center)
@@ -418,7 +421,10 @@ mod tests {
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
             .map(|(i, _)| i)
             .unwrap();
-        assert!((peak as isize - 511).abs() <= 1, "peak at {peak}, expected ~511");
+        assert!(
+            (peak as isize - 511).abs() <= 1,
+            "peak at {peak}, expected ~511"
+        );
     }
 
     #[test]
@@ -438,7 +444,12 @@ mod tests {
     fn hann_monotone_in_first_half() {
         let w = hann_window(1200);
         for i in 0..599 {
-            assert!(w[i] <= w[i + 1], "not monotone at {i}: {} > {}", w[i], w[i + 1]);
+            assert!(
+                w[i] <= w[i + 1],
+                "not monotone at {i}: {} > {}",
+                w[i],
+                w[i + 1]
+            );
         }
     }
 
@@ -473,8 +484,8 @@ mod tests {
     fn frame_count_one_second_at_48k() {
         let fs = (0.025 * SR).round() as usize; // 1200
         let st = (0.010 * SR).round() as usize; // 480
-        let n = SR as usize;                     // 48000
-        let expected = (n - fs) / st + 1;        // 98
+        let n = SR as usize; // 48000
+        let expected = (n - fs) / st + 1; // 98
         assert_eq!(frame_count(n, fs, st), expected);
     }
 
@@ -574,7 +585,10 @@ mod tests {
         let signal = make_sine(NOTE_FREQS[0], 2.0, 0.5);
         let fs = (0.025 * SR).round() as usize;
         let st = (0.010 * SR).round() as usize;
-        assert_eq!(analyze_full(&signal, SR).len(), frame_count(signal.len(), fs, st));
+        assert_eq!(
+            analyze_full(&signal, SR).len(),
+            frame_count(signal.len(), fs, st)
+        );
     }
 
     #[test]
@@ -603,7 +617,9 @@ mod tests {
     #[test]
     fn note_energy_is_nonnegative() {
         let signal = make_sine(NOTE_FREQS[0], 1.0, 0.5);
-        assert!(analyze_full(&signal, SR).iter().all(|f| f.note_energy >= 0.0));
+        assert!(analyze_full(&signal, SR)
+            .iter()
+            .all(|f| f.note_energy >= 0.0));
     }
 
     #[test]
@@ -618,42 +634,66 @@ mod tests {
 
     #[test]
     fn detects_c6() {
-        assert_eq!(dominant_pass3(&analyze_full(&make_sine(NOTE_FREQS[0], 2.0, 0.5), SR)), Some(0));
+        assert_eq!(
+            dominant_pass3(&analyze_full(&make_sine(NOTE_FREQS[0], 2.0, 0.5), SR)),
+            Some(0)
+        );
     }
 
     #[test]
     fn detects_d6() {
-        assert_eq!(dominant_pass3(&analyze_full(&make_sine(NOTE_FREQS[1], 2.0, 0.5), SR)), Some(1));
+        assert_eq!(
+            dominant_pass3(&analyze_full(&make_sine(NOTE_FREQS[1], 2.0, 0.5), SR)),
+            Some(1)
+        );
     }
 
     #[test]
     fn detects_e6() {
-        assert_eq!(dominant_pass3(&analyze_full(&make_sine(NOTE_FREQS[2], 2.0, 0.5), SR)), Some(2));
+        assert_eq!(
+            dominant_pass3(&analyze_full(&make_sine(NOTE_FREQS[2], 2.0, 0.5), SR)),
+            Some(2)
+        );
     }
 
     #[test]
     fn detects_f6() {
-        assert_eq!(dominant_pass3(&analyze_full(&make_sine(NOTE_FREQS[3], 2.0, 0.5), SR)), Some(3));
+        assert_eq!(
+            dominant_pass3(&analyze_full(&make_sine(NOTE_FREQS[3], 2.0, 0.5), SR)),
+            Some(3)
+        );
     }
 
     #[test]
     fn detects_g6() {
-        assert_eq!(dominant_pass3(&analyze_full(&make_sine(NOTE_FREQS[4], 2.0, 0.5), SR)), Some(4));
+        assert_eq!(
+            dominant_pass3(&analyze_full(&make_sine(NOTE_FREQS[4], 2.0, 0.5), SR)),
+            Some(4)
+        );
     }
 
     #[test]
     fn detects_a6() {
-        assert_eq!(dominant_pass3(&analyze_full(&make_sine(NOTE_FREQS[5], 2.0, 0.5), SR)), Some(5));
+        assert_eq!(
+            dominant_pass3(&analyze_full(&make_sine(NOTE_FREQS[5], 2.0, 0.5), SR)),
+            Some(5)
+        );
     }
 
     #[test]
     fn detects_b6() {
-        assert_eq!(dominant_pass3(&analyze_full(&make_sine(NOTE_FREQS[6], 2.0, 0.5), SR)), Some(6));
+        assert_eq!(
+            dominant_pass3(&analyze_full(&make_sine(NOTE_FREQS[6], 2.0, 0.5), SR)),
+            Some(6)
+        );
     }
 
     #[test]
     fn detects_c7() {
-        assert_eq!(dominant_pass3(&analyze_full(&make_sine(NOTE_FREQS[7], 2.0, 0.5), SR)), Some(7));
+        assert_eq!(
+            dominant_pass3(&analyze_full(&make_sine(NOTE_FREQS[7], 2.0, 0.5), SR)),
+            Some(7)
+        );
     }
 
     // ── analyze_audio wrapper ─────────────────────────────────────────────────
@@ -670,7 +710,10 @@ mod tests {
         let signal = make_sine(NOTE_FREQS[0], 1.0, 0.5);
         let fs = (0.025 * SR).round() as usize;
         let st = (0.010 * SR).round() as usize;
-        assert_eq!(analyze_audio(&signal, SR).len(), frame_count(signal.len(), fs, st));
+        assert_eq!(
+            analyze_audio(&signal, SR).len(),
+            frame_count(signal.len(), fs, st)
+        );
     }
 
     #[test]
@@ -687,7 +730,10 @@ mod tests {
     fn onset_fires_at_frame_zero() {
         let signal = make_sine(NOTE_FREQS[0], 1.0, 0.5);
         let frames = analyze_full(&signal, SR);
-        assert!(frames[0].onset, "onset should fire at frame 0 when signal starts loud");
+        assert!(
+            frames[0].onset,
+            "onset should fire at frame 0 when signal starts loud"
+        );
     }
 
     #[test]
@@ -712,7 +758,10 @@ mod tests {
         let signal = make_sine(NOTE_FREQS[0], 2.0, 0.5);
         let frames = analyze_full(&signal, SR);
         for i in 0..ONSET_HOLD_FRAMES.min(frames.len()) {
-            assert_ne!(frames[i].pass2, NO_PREDICTION, "frame {i} inside hold window has no prediction");
+            assert_ne!(
+                frames[i].pass2, NO_PREDICTION,
+                "frame {i} inside hold window has no prediction"
+            );
         }
     }
 
@@ -811,7 +860,10 @@ mod tests {
     fn wav_data_chunk_size() {
         let n = 300usize;
         let wav = encode_pcm_to_wav(&vec![0.0f32; n], 48000);
-        assert_eq!(u32::from_le_bytes(wav[40..44].try_into().unwrap()), (n * 2) as u32);
+        assert_eq!(
+            u32::from_le_bytes(wav[40..44].try_into().unwrap()),
+            (n * 2) as u32
+        );
     }
 
     #[test]
@@ -829,7 +881,10 @@ mod tests {
     #[test]
     fn wav_negative_full_scale() {
         let wav = encode_pcm_to_wav(&[-1.0f32], 48000);
-        assert_eq!(i16::from_le_bytes(wav[44..46].try_into().unwrap()), -0x8000i16);
+        assert_eq!(
+            i16::from_le_bytes(wav[44..46].try_into().unwrap()),
+            -0x8000i16
+        );
     }
 
     #[test]
@@ -841,7 +896,10 @@ mod tests {
     #[test]
     fn wav_clamping_below() {
         let wav = encode_pcm_to_wav(&[-2.0f32], 48000);
-        assert_eq!(i16::from_le_bytes(wav[44..46].try_into().unwrap()), -0x8000i16);
+        assert_eq!(
+            i16::from_le_bytes(wav[44..46].try_into().unwrap()),
+            -0x8000i16
+        );
     }
 
     #[test]
@@ -849,7 +907,10 @@ mod tests {
         let wav = encode_pcm_to_wav(&[0.0f32, 1.0, -1.0], 48000);
         assert_eq!(i16::from_le_bytes(wav[44..46].try_into().unwrap()), 0);
         assert_eq!(i16::from_le_bytes(wav[46..48].try_into().unwrap()), 0x7FFF);
-        assert_eq!(i16::from_le_bytes(wav[48..50].try_into().unwrap()), -0x8000i16);
+        assert_eq!(
+            i16::from_le_bytes(wav[48..50].try_into().unwrap()),
+            -0x8000i16
+        );
     }
 
     // ── compute_spectrogram ───────────────────────────────────────────────────
@@ -873,20 +934,26 @@ mod tests {
     #[test]
     fn spectrogram_values_normalized_to_unit_interval() {
         let signal = make_sine(NOTE_FREQS[0], 1.0, 0.5);
-        assert!(compute_spectrogram(&signal, SR).iter().all(|&v| v >= 0.0 && v <= 1.0));
+        assert!(compute_spectrogram(&signal, SR)
+            .iter()
+            .all(|&v| v >= 0.0 && v <= 1.0));
     }
 
     #[test]
     fn spectrogram_no_nan_or_inf() {
         let signal = make_sine(NOTE_FREQS[0], 1.0, 0.5);
-        assert!(compute_spectrogram(&signal, SR).iter().all(|v| v.is_finite()));
+        assert!(compute_spectrogram(&signal, SR)
+            .iter()
+            .all(|v| v.is_finite()));
     }
 
     #[test]
     fn spectrogram_all_zeros_input_returns_all_zeros() {
         // All samples 0 → raw values all ln(1e-6), min==max → normalized to 0.
         let signal = vec![0.0f32; 48000];
-        assert!(compute_spectrogram(&signal, SR).iter().all(|&v| v.abs() < 1e-5));
+        assert!(compute_spectrogram(&signal, SR)
+            .iter()
+            .all(|&v| v.abs() < 1e-5));
     }
 
     #[test]

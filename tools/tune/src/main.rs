@@ -8,9 +8,8 @@
 ///
 /// Requires ffmpeg on PATH.
 use analysis::{
-    analyze_full, FrameStats, NOTE_NAMES, NO_PREDICTION,
-    ENERGY_THRESHOLD, NOTE_DOMINANCE_THRESHOLD, ONSET_FLUX_RATIO,
-    ONSET_HOLD_FRAMES, SMOOTH_HALF_WIN,
+    analyze_full, FrameStats, ENERGY_THRESHOLD, NOTE_DOMINANCE_THRESHOLD, NOTE_NAMES,
+    NO_PREDICTION, ONSET_FLUX_RATIO, ONSET_HOLD_FRAMES, SMOOTH_HALF_WIN,
 };
 
 const SAMPLE_RATE: f32 = 48_000.0;
@@ -18,12 +17,17 @@ const SAMPLE_RATE: f32 = 48_000.0;
 fn decode_audio(path: &str) -> Result<Vec<f32>, String> {
     let out = std::process::Command::new("ffmpeg")
         .args([
-            "-i", path,
-            "-ac", "1",
-            "-ar", "48000",
-            "-f", "f32le",
+            "-i",
+            path,
+            "-ac",
+            "1",
+            "-ar",
+            "48000",
+            "-f",
+            "f32le",
             "pipe:1",
-            "-loglevel", "error",
+            "-loglevel",
+            "error",
         ])
         .output()
         .map_err(|e| format!("ffmpeg not found: {e}"))?;
@@ -59,7 +63,7 @@ fn flux_display(flux: f32) -> String {
 }
 
 fn print_row(f: usize, sr: f32, s: &FrameStats, pass: u8) {
-    let t = (f * (0.010 * sr as f32) as usize) as f32 / sr;
+    let t = (f * (0.010 * sr) as usize) as f32 / sr;
     let winner_label = if s.winner == NO_PREDICTION {
         "     —".to_string()
     } else {
@@ -71,7 +75,9 @@ fn print_row(f: usize, sr: f32, s: &FrameStats, pass: u8) {
     if s.rms < ENERGY_THRESHOLD {
         flags.push("[silent]");
     } else {
-        if s.onset { flags.push("ONSET"); }
+        if s.onset {
+            flags.push("ONSET");
+        }
         if s.pass1 == NO_PREDICTION && s.rms >= ENERGY_THRESHOLD {
             flags.push("low-dom");
         }
@@ -109,7 +115,11 @@ fn main() {
         match args[i].as_str() {
             "--pass" => {
                 i += 1;
-                pass = args.get(i).and_then(|s| s.parse().ok()).unwrap_or(3).min(3).max(1);
+                pass = args
+                    .get(i)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(3)
+                    .clamp(1, 3);
             }
             arg => path = Some(arg),
         }
@@ -126,7 +136,10 @@ fn main() {
 
     let samples = match decode_audio(path) {
         Ok(s) => s,
-        Err(e) => { eprintln!("Error: {e}"); std::process::exit(1); }
+        Err(e) => {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        }
     };
 
     let sr = SAMPLE_RATE;
@@ -135,7 +148,12 @@ fn main() {
     let frame_ms = 25;
     let stride_ms = 10;
 
-    println!("File: {} samples  {:.3}s  {} Hz", samples.len(), samples.len() as f32 / sr, sr as u32);
+    println!(
+        "File: {} samples  {:.3}s  {} Hz",
+        samples.len(),
+        samples.len() as f32 / sr,
+        sr as u32
+    );
     println!("Frames: {num_frames}  ({frame_ms}ms / {stride_ms}ms stride)");
     println!("Showing: Pass {pass} output  (P1=dominance  P2=onset-gated  P3=mode-filtered=app)");
     println!(
@@ -156,10 +174,16 @@ fn main() {
     let silent = frames.iter().filter(|s| s.rms < ENERGY_THRESHOLD).count();
 
     let summary = |label: &str, pred_fn: fn(&FrameStats) -> u8| {
-        let preds: Vec<u8> = frames.iter().map(|s| pred_fn(s)).collect();
-        let valid: Vec<u8> = preds.iter().copied().filter(|&p| p != NO_PREDICTION).collect();
+        let preds: Vec<u8> = frames.iter().map(&pred_fn).collect();
+        let valid: Vec<u8> = preds
+            .iter()
+            .copied()
+            .filter(|&p| p != NO_PREDICTION)
+            .collect();
         let mut counts = [0usize; 8];
-        for &p in &valid { counts[p as usize] += 1; }
+        for &p in &valid {
+            counts[p as usize] += 1;
+        }
         println!("\n── {label} ────────────────────────────────────────");
         println!("Frames with prediction : {} / {num_frames}", valid.len());
         println!("Frames silent (RMS)    : {silent}");
@@ -172,6 +196,6 @@ fn main() {
     };
 
     summary("Pass 1 — dominance gate", |s| s.pass1);
-    summary("Pass 2 — onset gating",   |s| s.pass2);
+    summary("Pass 2 — onset gating", |s| s.pass2);
     summary("Pass 3 — mode filter (app output)", |s| s.pass3);
 }
